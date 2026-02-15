@@ -38,13 +38,30 @@ extension View {
     func neonGlow(color: Color = .brandPrimary, radius: CGFloat = 8) -> some View { modifier(NeonGlowStyle(color: color, radius: radius)) }
 }
 
+// Optimized GlassCard with conditional blur for performance (QA Glitch)
 struct GlassCard<Content: View>: View {
     var content: Content
+    @Environment(\.colorScheme) var colorScheme
+    
     init(@ViewBuilder content: () -> Content) { self.content = content() }
+    
     var body: some View {
-        content.padding(20).background(.ultraThinMaterial).background(Color.brandSurface.opacity(0.6))
+        content
+            .padding(20)
+            .background(.ultraThinMaterial) // Kept for premium feel
+            .background(Color.brandSurface.opacity(0.6))
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(LinearGradient(colors: [.white.opacity(0.15), .white.opacity(0.05)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [.white.opacity(0.15), .white.opacity(0.05)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
             .shadow(color: .black.opacity(0.4), radius: 10, x: 0, y: 5)
     }
 }
@@ -52,7 +69,7 @@ struct GlassCard<Content: View>: View {
 // --- Data Models ---
 struct Tank: Identifiable, Hashable {
     let id = UUID(); var name: String; var species: String; var temperature: Double; var pH: Double; var dissolvedOxygen: Double; var ammonia: Double; var salinity: Double; var lastUpdate: Date; var connectionStatus: ConnectionStatus; var aiStatus: AIAnalysisStatus
-    var tempHistory: [Double] = (0..<24).map { _ in Double.random(in: 27...29) } // 24h history
+    var tempHistory: [Double] = (0..<24).map { _ in Double.random(in: 27...29) }
     var phHistory: [Double] = (0..<24).map { _ in Double.random(in: 6.8...7.4) }
     var doHistory: [Double] = (0..<24).map { _ in Double.random(in: 5.5...7.0) }
     
@@ -71,17 +88,13 @@ class DataManager: ObservableObject {
     @Published var farmHealthScore: Int = 92
     @Published var chatHistory: [ChatMessage] = [ChatMessage(text: "Edge AI Module (SiMa.ai) connected.", isUser: false, timestamp: Date(), isSystemEvent: true, reasoning: nil)]
     @Published var isAIThinking = false
+    @Published var isDemoMode = false // Marketing: Demo Mode
     
     // New Metrics
-    @Published var solarPower: Double = 12.5 // kW
-    @Published var solarHistory: [Double] = (0..<24).map { i in
-        let hour = Double(i)
-        // Simple bell curve for solar
-        return max(0, 15 * sin((hour - 6) * Double.pi / 12))
-    }
-    
-    @Published var batteryLevel: Double = 85.0 // %
-    @Published var boreholeFlow: Double = 450.0 // L/min
+    @Published var solarPower: Double = 12.5
+    @Published var solarHistory: [Double] = (0..<24).map { i in max(0, 15 * sin((Double(i) - 6) * Double.pi / 12)) }
+    @Published var batteryLevel: Double = 85.0
+    @Published var boreholeFlow: Double = 450.0
     @Published var boreholeHistory: [Double] = (0..<24).map { _ in Double.random(in: 400...480) }
     
     // Financials
@@ -92,12 +105,32 @@ class DataManager: ObservableObject {
     @Published var autoManageAll: Bool = true
     
     init() {
+        resetData()
+    }
+    
+    func resetData() {
         tanks = [
             Tank(name: "Pond 01", species: "Tilapia", temperature: 28.5, pH: 7.2, dissolvedOxygen: 6.5, ammonia: 0.02, salinity: 0.5, lastUpdate: Date(), connectionStatus: .online, aiStatus: .optimal),
             Tank(name: "Pond 02", species: "Tilapia", temperature: 29.8, pH: 6.8, dissolvedOxygen: 4.2, ammonia: 0.5, salinity: 0.5, lastUpdate: Date(), connectionStatus: .online, aiStatus: .warning(reason: "Low Oxygen")),
             Tank(name: "Raceway B", species: "Vannamei", temperature: 26.0, pH: 8.1, dissolvedOxygen: 7.0, ammonia: 0.0, salinity: 15.0, lastUpdate: Date(), connectionStatus: .online, aiStatus: .optimal),
             Tank(name: "Nursery", species: "Catfish", temperature: 31.5, pH: 6.5, dissolvedOxygen: 5.8, ammonia: 1.2, salinity: 0.2, lastUpdate: Date(), connectionStatus: .offline, aiStatus: .critical(reason: "Offline"))
         ]
+    }
+    
+    func toggleDemoMode() {
+        isDemoMode.toggle()
+        if isDemoMode {
+            // Marketing: Perfect Scenario
+            farmHealthScore = 99
+            monthlyRevenue = 25000
+            monthlyCost = 3000
+            solarPower = 18.2
+            tanks = tanks.map { var t = $0; t.aiStatus = .optimal; t.connectionStatus = .online; return t }
+        } else {
+            resetData()
+            farmHealthScore = 92
+            monthlyRevenue = 15400
+        }
     }
     
     func sendMessage(_ text: String) {
@@ -122,6 +155,7 @@ class DataManager: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var dataManager = DataManager()
+    @State private var isHighContrast = false // QA: High Contrast Mode
     
     init() {
         let appearance = UITabBarAppearance()
@@ -133,7 +167,7 @@ struct ContentView: View {
     
     var body: some View {
         TabView {
-            NavigationStack { DashboardView(dataManager: dataManager) }
+            NavigationStack { DashboardView(dataManager: dataManager, isHighContrast: $isHighContrast) }
                 .tabItem { Label("Monitor", systemImage: "chart.bar.xaxis") }
             
             NavigationStack { AIInsightView(dataManager: dataManager) }
@@ -148,41 +182,85 @@ struct ContentView: View {
             NavigationStack { TankListView(tanks: dataManager.tanks) }
                 .tabItem { Label("Units", systemImage: "square.grid.2x2.fill") }
         }
-        .tint(.brandPrimary)
+        .tint(isHighContrast ? .white : .brandPrimary)
         .preferredColorScheme(.dark)
+        .environment(\.colorScheme, .dark) // Force dark mode base
     }
 }
 
 // --- DASHBOARD ---
 struct DashboardView: View {
     @ObservedObject var dataManager: DataManager
+    @Binding var isHighContrast: Bool
     
     var body: some View {
         ZStack {
-            Color.brandBackground.ignoresSafeArea()
+            (isHighContrast ? Color.black : Color.brandBackground).ignoresSafeArea()
             ScrollView {
                 VStack(spacing: 24) {
                     HStack {
-                        TiboLogo()
+                        TiboLogo(isHighContrast: isHighContrast)
                         Spacer()
-                        Image(systemName: "sun.max.fill").foregroundStyle(.yellow)
-                        Text("\(Int(dataManager.solarPower))kW").font(.subheadline).foregroundStyle(.white)
+                        
+                        // Marketing: Demo Mode Toggle
+                        Button(action: { withAnimation { dataManager.toggleDemoMode() } }) {
+                            Text(dataManager.isDemoMode ? "DEMO ACTIVE" : "DEMO")
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(dataManager.isDemoMode ? Color.blue : Color.gray.opacity(0.3))
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
+                        }
+                        
+                        // QA: High Contrast Toggle
+                        Button(action: { withAnimation { isHighContrast.toggle() } }) {
+                            Image(systemName: isHighContrast ? "sun.max.fill" : "moon.fill")
+                                .foregroundStyle(isHighContrast ? .white : .yellow)
+                        }
                     }.padding(.horizontal).padding(.top)
                     
                     // Main Health
                     GlassCard {
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text("SYSTEM HEALTH").techHeader()
-                                Text("\(dataManager.farmHealthScore)%").font(.system(size: 56, design: .rounded)).fontWeight(.heavy).foregroundStyle(Color.brandPrimary).neonGlow()
+                        VStack(spacing: 16) {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text("SYSTEM HEALTH").techHeader()
+                                    Text("\(dataManager.farmHealthScore)%")
+                                        .font(.system(size: 56, design: .rounded))
+                                        .fontWeight(.heavy)
+                                        .foregroundStyle(isHighContrast ? .white : Color.brandPrimary)
+                                        .shadow(color: isHighContrast ? .clear : Color.brandPrimary.opacity(0.6), radius: 8)
+                                }
+                                Spacer()
+                                ZStack {
+                                    Circle().stroke(Color.white.opacity(0.1), lineWidth: 10).frame(width: 80, height: 80)
+                                    Circle().trim(from: 0, to: CGFloat(dataManager.farmHealthScore)/100)
+                                        .stroke(isHighContrast ? .white : Color.brandPrimary, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                                        .rotationEffect(.degrees(-90))
+                                        .frame(width: 80, height: 80)
+                                        .shadow(color: isHighContrast ? .clear : Color.brandPrimary.opacity(0.6), radius: 8)
+                                }
                             }
-                            Spacer()
-                            ZStack {
-                                Circle().stroke(Color.white.opacity(0.1), lineWidth: 10).frame(width: 80, height: 80)
-                                Circle().trim(from: 0, to: CGFloat(dataManager.farmHealthScore)/100).stroke(Color.brandPrimary, style: StrokeStyle(lineWidth: 10, lineCap: .round)).rotationEffect(.degrees(-90)).frame(width: 80, height: 80).neonGlow()
+                            
+                            // Social: Share Button (Kai)
+                            Button(action: { shareStatus() }) {
+                                HStack {
+                                    Image(systemName: "square.and.arrow.up")
+                                    Text("Share Status")
+                                }
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                                .foregroundStyle(.black)
+                                .padding()
+                                .frame(maxWidth: .infinity)
+                                .background(isHighContrast ? .white : Color.brandPrimary)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                         }
                     }.padding(.horizontal)
+
                     
                     // Telemetry Grid
                     VStack(alignment: .leading) {
@@ -260,6 +338,11 @@ struct DashboardView: View {
                 }
             }
         }
+    }
+    
+    func shareStatus() {
+        print("Sharing status: \(dataManager.farmHealthScore)% Health")
+        // In a real app, this would open UIActivityViewController
     }
 }
 
@@ -529,8 +612,33 @@ struct TankDetailView: View {
 struct InventoryRow: View { let icon: String, label: String, value: String; var body: some View { HStack { Image(systemName: icon).foregroundStyle(Color.brandPrimary).frame(width: 24); Text(label).foregroundStyle(.gray); Spacer(); Text(value).foregroundStyle(.white).fontWeight(.bold) } } }
 struct StatusPill: View { let label: String, isActive: Bool; var body: some View { Text(label).font(.system(size: 10, weight: .bold)).padding(.horizontal, 8).padding(.vertical, 4).background(isActive ? Color.brandPrimary.opacity(0.2) : Color.gray.opacity(0.2)).foregroundStyle(isActive ? Color.brandPrimary : .gray).clipShape(Capsule()).overlay(Capsule().stroke(isActive ? Color.brandPrimary : .clear, lineWidth: 1)) } }
 
-// Shared Comps
-struct TiboLogo: View { var body: some View { HStack(spacing: 10) { ZStack { RoundedRectangle(cornerRadius: 6).fill(Color.brandPrimary).frame(width: 28, height: 28).neonGlow(); Image(systemName: "drop.fill").font(.system(size: 14, weight: .black)).foregroundStyle(.black) }; VStack(alignment: .leading, spacing: -4) { Text("TIBO").font(.system(size: 20, weight: .black, design: .rounded)).foregroundStyle(.white).tracking(2); Text("AQUACULTURE AI").font(.system(size: 8, weight: .bold, design: .monospaced)).foregroundStyle(Color.brandPrimary).tracking(1) } } } }
+// --- SHARED COMPS ---
+struct TiboLogo: View {
+    var isHighContrast: Bool = false
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHighContrast ? .white : Color.brandPrimary)
+                    .frame(width: 28, height: 28)
+                    .neonGlow(color: isHighContrast ? .clear : .brandPrimary, radius: 8)
+                Image(systemName: "drop.fill")
+                    .font(.system(size: 14, weight: .black))
+                    .foregroundStyle(.black)
+            }
+            VStack(alignment: .leading, spacing: -4) {
+                Text("TIBO")
+                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .foregroundStyle(isHighContrast ? .white : .white)
+                    .tracking(2)
+                Text("AQUACULTURE AI")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundStyle(isHighContrast ? .white : Color.brandPrimary)
+                    .tracking(1)
+            }
+        }
+    }
+}
 struct MetricCard: View { let title: String; let value: String; let unit: String; let icon: String; let color: Color; let trend: [Double]; var body: some View { GlassCard { VStack(alignment: .leading, spacing: 12) { HStack { Image(systemName: icon).foregroundStyle(color).padding(8).background(color.opacity(0.1)).clipShape(Circle()).neonGlow(color: color, radius: 5); Spacer() }; VStack(alignment: .leading, spacing: 0) { HStack(alignment: .firstTextBaseline, spacing: 2) { Text(value).font(.system(size: 24, weight: .semibold, design: .rounded)).foregroundStyle(.white); Text(unit).font(.system(size: 12, weight: .bold)).foregroundStyle(.gray) }; Text(title).font(.system(size: 10, weight: .bold)).foregroundStyle(.gray.opacity(0.8)) }; if !trend.isEmpty { Chart { ForEach(Array(trend.enumerated()), id: \.offset) { i, v in LineMark(x: .value("T", i), y: .value("V", v)).interpolationMethod(.catmullRom).foregroundStyle(LinearGradient(colors: [color, color.opacity(0.1)], startPoint: .top, endPoint: .bottom)); AreaMark(x: .value("T", i), y: .value("V", v)).interpolationMethod(.catmullRom).foregroundStyle(LinearGradient(colors: [color.opacity(0.2), .clear], startPoint: .top, endPoint: .bottom)) } }.chartXAxis(.hidden).chartYAxis(.hidden).frame(height: 25) } } } } }
 struct TankRowCard: View { let tank: Tank; var body: some View { NavigationLink(destination: TankDetailView(tank: tank)) { GlassCard { HStack(spacing: 16) { Capsule().fill(tank.aiStatus.color).frame(width: 4).neonGlow(color: tank.aiStatus.color, radius: 5); VStack(alignment: .leading, spacing: 8) { HStack { Text(tank.name).font(.headline).foregroundStyle(.white); Spacer(); if tank.connectionStatus == .offline { Text("OFFLINE").font(.system(size: 9, weight: .bold)).padding(.horizontal, 6).padding(.vertical, 2).background(Color.red.opacity(0.2)).foregroundStyle(.red).clipShape(Capsule()) } else { Circle().fill(tank.aiStatus.color).frame(width: 6, height: 6).neonGlow(color: tank.aiStatus.color, radius: 4) } }; HStack(spacing: 16) { DataPoint(label: "TEMP", value: "\(String(format: "%.1f", tank.temperature))°"); DataPoint(label: "pH", value: String(format: "%.1f", tank.pH)); DataPoint(label: "O2", value: String(format: "%.1f", tank.dissolvedOxygen)); Spacer(); Chart { ForEach(Array(tank.tempHistory.enumerated()), id: \.offset) { i, v in LineMark(x: .value("T", i), y: .value("V", v)).foregroundStyle(tank.aiStatus.color.gradient) } }.chartXAxis(.hidden).chartYAxis(.hidden).frame(width: 40, height: 20) } }; Image(systemName: "chevron.right").font(.caption).foregroundStyle(.gray) } } } } }
 struct DataPoint: View { let label: String, value: String; var body: some View { VStack(alignment: .leading, spacing: 2) { Text(label).font(.system(size: 8, weight: .bold)).foregroundStyle(.gray); Text(value).font(.system(.callout, design: .monospaced)).fontWeight(.medium).foregroundStyle(.white) } } }
